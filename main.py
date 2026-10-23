@@ -42,14 +42,37 @@ NUM_KR = {
 
 @st.cache_data(show_spinner="데이터를 불러오는 중...")
 def load_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_URL)
+    df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+    # 열 이름 앞뒤 공백·BOM 제거
+    df.columns = df.columns.str.replace("\ufeff", "", regex=False).str.strip()
+
+    required = [
+        "Major_Category", "Year_of_Study", "Pre_Semester_GPA", "Weekly_GenAI_Hours",
+        "Primary_Use_Case", "Prompt_Engineering_Skill", "Tool_Diversity",
+        "Paid_Subscription", "Traditional_Study_Hours", "Perceived_AI_Dependency",
+        "Institutional_Policy", "Anxiety_Level_During_Exams", "Post_Semester_GPA",
+        "Skill_Retention_Score", "Burnout_Risk_Level",
+    ]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        st.error(f"CSV에서 다음 열을 찾지 못했습니다: {missing}")
+        st.write("실제로 읽힌 열 이름:", list(df.columns))
+        st.write("읽힌 데이터 미리보기:")
+        st.dataframe(df.head())
+        st.stop()
+
     df["GPA_Change"] = df["Post_Semester_GPA"] - df["Pre_Semester_GPA"]
     df["AI_Hours_Group"] = pd.cut(
         df["Weekly_GenAI_Hours"],
         bins=[-0.01, 2, 5, 10, 20, 40.01],
         labels=HOURS_LABELS,
     )
-    df["Paid_Subscription"] = df["Paid_Subscription"].map({True: "유료", False: "무료"})
+    # True/False(bool)이든 "True"/"False"(문자열)이든 모두 처리
+    df["Paid_Subscription"] = (
+        df["Paid_Subscription"].astype(str).str.strip().str.lower()
+        .map({"true": "유료", "false": "무료", "1": "유료", "0": "무료"})
+        .fillna("알 수 없음")
+    )
     return df
 
 
