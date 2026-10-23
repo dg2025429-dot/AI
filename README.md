@@ -19,3 +19,14 @@
 - 실생활과 관련된 주제: 생성형 AI는 현재 교육 환경에서 널리 활용되고 있는 기술이므로, 분석 결과를 통해 AI 사용 습관과 학업 성취도의 관계를 살펴보고 효과적인 학습 방법에 대해 논의할 수 있다.
 
 ## 4) 제외 할 데이터
+- Major_Category: 전공 계열
+- Year_of_Study: 학년
+- Primary_Use_Case: AI 주 사용 목적
+- Prompt_Engineering_Skill: 프롬프트 작성 숙련도
+- Tool_Diversity: AI 도구 다양성 (사용하는 도구 종류 수)
+- Paid_Subscription: 유료 구독 여부
+- Perceived_AI_Dependency: 체감 AI 의존도
+- Institutional_Policy: 학교의 AI 사용 정책
+- Anxiety_Level_During_Exams: 시험 기간 불안 수준
+- Skill_Retention_Score: 기술 유지 점수
+- Burnout_Risk_Level: 번아웃 위험 수준
