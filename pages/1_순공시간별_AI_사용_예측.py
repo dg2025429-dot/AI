@@ -10,11 +10,17 @@ DATA_URL = (
     "ai_student_impact_dataset%20(1).csv"
 )
 CORE = ["Pre_Semester_GPA", "Weekly_GenAI_Hours", "Traditional_Study_Hours", "Post_Semester_GPA"]
-GPA_MAX = 4.0
-PT = 100 / GPA_MAX  # GPA 1.0 = 25점 (단순 비례 환산)
+GPA_MAX = 4.0  # 데이터의 GPA 만점
 
 STUDY_BINS = [-np.inf, 5, 10, 15, np.inf]
 STUDY_LABELS = ["5h 이하", "5~10h", "10~15h", "15h 이상"]
+
+# 점수 방식: 데이터(4.0 만점)를 단순 비례로 바꿔서 보여줍니다.
+MODES = {
+    "100점 만점 (초·중·고)": {"max": 100.0, "unit": "점"},
+    "학점 4.0 만점": {"max": 4.0, "unit": "GPA"},
+    "학점 4.5 만점": {"max": 4.5, "unit": "GPA"},
+}
 
 
 @st.cache_data(show_spinner="데이터를 불러오는 중...")
@@ -76,7 +82,7 @@ def predict(m, ai, study, pre):
 # 화면
 # ------------------------------------------------------------------
 st.title("🧮 순공시간별 AI 사용 예측")
-st.caption("전통 학습시간(순공시간)과 현재 점수에 따라, 주당 AI 사용시간이 GPA 변화와 어떤 관계인지 예측해 보는 페이지")
+st.caption("전통 학습시간(순공시간)과 현재 성적에 따라, 주당 AI 사용시간이 성적 변화와 어떤 관계인지 예측해 보는 페이지")
 
 st.warning(
     "⚠️ **이 사이트의 결과를 너무 믿지 마세요.**\n\n"
@@ -85,7 +91,7 @@ st.warning(
     "- 보이는 것은 **'같이 움직인다'는 관계**일 뿐, **AI를 써서 성적이 올랐다는 인과관계가 아니에요.**\n"
     "- 데이터의 출처와 수집 방식을 아직 검증하지 못했어요. 값이 상한(GPA 4.0, AI 40시간)에 몰려 있는 것은 "
     "실제 조사 데이터가 아닐 수도 있다는 신호예요.\n"
-    "- 100점 환산 점수는 단순 비례 계산이라 **실제 학교 성적과 다를 수 있어요.**"
+    "- 100점·4.5 만점 환산은 단순 비례 계산이라 **실제 학교 성적과 다를 수 있어요.**"
 )
 
 full = load_data()
@@ -102,60 +108,86 @@ st.caption(f"분석에 사용 중인 학생 수: {len(df):,}명")
 
 info = train(df[["ai", "study", "pre", "delta"]])
 
+# ---- 점수 방식 선택 (100점 / 학점 4.0 / 학점 4.5)
 st.subheader("내 조건 입력")
+mode = st.radio("성적을 어떤 방식으로 볼까요?", list(MODES), horizontal=True)
+SMAX, UNIT_NAME = MODES[mode]["max"], MODES[mode]["unit"]
+UNIT = SMAX / GPA_MAX  # 데이터 GPA 1.0이 이 방식에서 몇 점/학점인지
+IS100 = SMAX == 100.0
+
+
+def fmt_val(v):  # 점수/학점 값
+    return f"{v:.0f}점" if IS100 else f"{v:.2f}"
+
+
+def fmt_chg(c):  # 변화량
+    return f"{c:+.1f}점" if IS100 else f"{c:+.3f}"
+
+
 c1, c2, c3 = st.columns(3)
 study_h = c1.slider("주당 전통 학습시간 (h)", float(df["study"].min()), float(df["study"].max()), 10.0, 0.5)
-score_now = c2.number_input("현재 점수 (100점 만점)", 40, 100, 80, 1,
-                            help="100점 만점 점수를 GPA(4.0)로 환산해서 모델에 넣어요.")
+if IS100:
+    now = c2.number_input("현재 점수 (100점 만점)", 40, 100, 80, 1)
+else:
+    now = c2.number_input(f"현재 학점 ({SMAX:g} 만점)", 1.0, SMAX, round(3.0 * UNIT, 2), 0.05)
 ai_h = c3.slider("주당 AI 사용시간 (h)", 0.0, 40.0, 5.0, 0.5)
 
-pre_gpa = float(np.clip(score_now / PT, df["pre"].min(), GPA_MAX))
-st.caption(f"환산: {score_now}점 → GPA {score_now / PT:.2f} (GPA 1.0 = 25점, 단순 비례)")
+gpa4_raw = now / UNIT
+pre_gpa = float(np.clip(gpa4_raw, df["pre"].min(), GPA_MAX))
+st.caption(
+    f"모델은 4.0 만점 GPA로 계산해요: {fmt_val(now)} → GPA {gpa4_raw:.2f} (4.0 기준, 단순 비례 ×{1 / UNIT:.3f})"
+    + (" · 데이터에 없는 낮은 점수라서 가장 가까운 값으로 계산했어요." if abs(pre_gpa - gpa4_raw) > 1e-9 else "")
+)
 
 grid = np.arange(0, 40.01, 0.5)
 curve = predict(info, grid, study_h, pre_gpa)
 here = float(predict(info, ai_h, study_h, pre_gpa)[0])
-gain = curve - curve[0]  # AI 0시간 대비
+gain = curve - curve[0]  # AI 0시간 대비 (GPA 4.0 기준)
 gain_here = here - float(curve[0])
 
-pts = here * PT
-score_pred = float(np.clip(score_now + pts, 0, 100))
+chg = here * UNIT
+pred_val = float(np.clip(now + chg, 0, SMAX))
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("예상 GPA 변화", f"{here:+.3f}")
-m2.metric("예상 점수 변화 (참고용)", f"{pts:+.1f}점")
-m3.metric("예상 점수 (100점 만점)", f"{score_pred:.0f}점")
-m4.metric("AI 0시간 대비", f"{gain_here * PT:+.1f}점")
+m1.metric("예상 변화", fmt_chg(chg))
+m2.metric("예상 점수" if IS100 else "예상 학점", fmt_val(pred_val))
+m3.metric("AI 0시간 대비", fmt_chg(gain_here * UNIT))
+if IS100:
+    m4.metric("예상 GPA 변화 (4.0 기준)", f"{here:+.3f}")
+else:
+    m4.metric("100점 환산 변화 (참고)", f"{here * 25:+.1f}점")
 
 noise = info["resid_sd"]
+noise_txt = f"±{noise * UNIT:.0f}점" if IS100 else f"±{noise * UNIT:.2f}"
 st.info(
-    f"같은 조건의 학생들도 결과가 크게 흩어져요. 모델이 못 맞히는 개인차는 대략 "
-    f"**±{noise:.2f} GPA (±{noise * PT:.0f}점)** 정도예요. 위 숫자는 '평균적인 경향'일 뿐이에요."
+    f"같은 조건의 학생들도 결과가 크게 흩어져요. 모델이 못 맞히는 개인차는 대략 **{noise_txt}** 정도예요. "
+    "위 숫자는 '평균적인 경향'일 뿐이에요."
 )
 
 # ---- ① 내 조건의 곡선
-st.subheader("① 내 조건에서의 AI 사용시간별 예상 점수 변화")
-cdf = pd.DataFrame({"ai": grid, "점수 변화": curve * PT})
+st.subheader(f"① 내 조건에서의 AI 사용시간별 예상 {'점수' if IS100 else '학점'} 변화")
+y_title = f"예상 {'점수' if IS100 else '학점'} 변화 ({UNIT_NAME})"
+cdf = pd.DataFrame({"ai": grid, "변화": curve * UNIT})
 line = alt.Chart(cdf).mark_line(color="#1f77b4", strokeWidth=3).encode(
     x=alt.X("ai:Q", title="주당 AI 사용시간 (h)", scale=alt.Scale(domain=[0, 40])),
-    y=alt.Y("점수 변화:Q", title="예상 점수 변화 (100점 환산, 점)"),
-    tooltip=[alt.Tooltip("ai:Q", title="AI(h)"), alt.Tooltip("점수 변화:Q", format="+.2f")],
+    y=alt.Y("변화:Q", title=y_title),
+    tooltip=[alt.Tooltip("ai:Q", title="AI(h)"), alt.Tooltip("변화:Q", format="+.3f")],
 )
-mark = alt.Chart(pd.DataFrame({"ai": [ai_h], "점수 변화": [pts]})).mark_point(
-    color="crimson", size=140, filled=True).encode(x="ai:Q", y="점수 변화:Q")
+mark = alt.Chart(pd.DataFrame({"ai": [ai_h], "변화": [chg]})).mark_point(
+    color="crimson", size=140, filled=True).encode(x="ai:Q", y="변화:Q")
 zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="gray", strokeDash=[4, 4]).encode(y="y:Q")
 layers = line + mark + zero
 
-if gain.max() > 0.02:  # 약 0.5점 이상 오르는 구간이 있을 때만
+if gain.max() > 0.02:  # 4.0 기준 0.02 이상(≈0.5점) 오르는 구간이 있을 때만
     near = grid[gain >= 0.9 * gain.max()]
     best_ai = float(grid[int(np.argmax(gain))])
     zone = alt.Chart(pd.DataFrame({"x0": [near.min()], "x1": [near.max()]})).mark_rect(
         color="green", opacity=0.15).encode(x="x0:Q", x2="x1:Q")
     layers = zone + layers
     st.success(
-        f"이 조건(학습 {study_h:g}h, {score_now}점)에서 예측 효과가 가장 큰 AI 사용시간은 **주 {best_ai:g}시간 근처**, "
+        f"이 조건(학습 {study_h:g}h, 현재 {fmt_val(now)})에서 예측 효과가 가장 큰 AI 사용시간은 **주 {best_ai:g}시간 근처**, "
         f"최대 효과의 90% 이상인 구간은 **{near.min():g}~{near.max():g}시간**이에요 "
-        f"(AI 0시간 대비 최대 {gain.max() * PT:+.1f}점)."
+        f"(AI 0시간 대비 최대 {fmt_chg(gain.max() * UNIT)})."
     )
 else:
     st.success("이 조건에서는 AI 사용시간을 늘려도 뚜렷하게 오르는 경향이 모델에서 보이지 않아요.")
@@ -163,33 +195,34 @@ st.altair_chart(layers.properties(height=360), use_container_width=True)
 
 # ---- ② 전통 학습시간 수준별 비교
 st.subheader("② 전통 학습시간 수준별로 비교하기")
-st.caption(f"현재 점수 {score_now}점 기준. 각 집단의 대표값(중앙값)을 학습시간으로 사용했고, AI 0시간일 때와의 차이로 그렸어요.")
+st.caption(f"현재 {fmt_val(now)} 기준. 각 집단의 대표값(중앙값)을 학습시간으로 사용했고, AI 0시간일 때와의 차이로 그렸어요.")
 rows, summ = [], []
+eff_col = f"AI 0h 대비 최대 효과({UNIT_NAME})"
 for g in STUDY_LABELS:
     sub = df[df["group"] == g]
     if len(sub) < 30:
         continue
     s_med = float(sub["study"].median())
     cv = predict(info, grid, s_med, pre_gpa)
-    gn = (cv - cv[0]) * PT
-    rows.append(pd.DataFrame({"ai": grid, "점수 변화": gn, "전통 학습시간": g}))
-    if gn.max() > 0.5:
+    gn = (cv - cv[0]) * UNIT
+    rows.append(pd.DataFrame({"ai": grid, "변화": gn, "전통 학습시간": g}))
+    if gn.max() > 0.02 * UNIT:
         nr = grid[gn >= 0.9 * gn.max()]
         summ.append({"전통 학습시간": g, "대표 학습시간(h)": round(s_med, 1),
                      "효과가 가장 큰 AI(h)": float(grid[int(np.argmax(gn))]),
                      "효과 90% 이상 구간(h)": f"{nr.min():g}~{nr.max():g}",
-                     "AI 0h 대비 최대 효과(점)": round(float(gn.max()), 1)})
+                     eff_col: round(float(gn.max()), 3)})
     else:
         summ.append({"전통 학습시간": g, "대표 학습시간(h)": round(s_med, 1),
                      "효과가 가장 큰 AI(h)": None, "효과 90% 이상 구간(h)": "뚜렷한 효과 없음",
-                     "AI 0h 대비 최대 효과(점)": round(float(gn.max()), 1)})
+                     eff_col: round(float(gn.max()), 3)})
 if rows:
     gdf = pd.concat(rows)
     ch = alt.Chart(gdf).mark_line(strokeWidth=2.5).encode(
         x=alt.X("ai:Q", title="주당 AI 사용시간 (h)", scale=alt.Scale(domain=[0, 40])),
-        y=alt.Y("점수 변화:Q", title="AI 0시간 대비 예상 점수 변화 (점)"),
+        y=alt.Y("변화:Q", title=f"AI 0시간 대비 예상 변화 ({UNIT_NAME})"),
         color=alt.Color("전통 학습시간:N", sort=STUDY_LABELS),
-        tooltip=["전통 학습시간", alt.Tooltip("ai:Q", title="AI(h)"), alt.Tooltip("점수 변화:Q", format="+.2f")],
+        tooltip=["전통 학습시간", alt.Tooltip("ai:Q", title="AI(h)"), alt.Tooltip("변화:Q", format="+.3f")],
     )
     st.altair_chart((ch + zero).properties(height=360), use_container_width=True)
     st.dataframe(pd.DataFrame(summ), hide_index=True, use_container_width=True)
@@ -199,7 +232,7 @@ st.subheader("③ 이 모델은 얼마나 믿을 만할까?")
 k1, k2, k3 = st.columns(3)
 k1.metric("결정계수 R² (테스트)", f"{info['r2']:.3f}",
           help="1에 가까울수록 잘 맞고, 0에 가까우면 거의 못 맞힌다는 뜻이에요.")
-k2.metric("평균 오차 MAE (GPA)", f"{info['mae']:.3f}")
+k2.metric("평균 오차 MAE (GPA 4.0 기준)", f"{info['mae']:.3f}")
 k3.metric("그냥 평균으로 찍었을 때 MAE", f"{info['base_mae']:.3f}",
           help="모델 오차가 이 값보다 확실히 작아야 쓸모가 있어요.")
 st.caption(
@@ -209,12 +242,13 @@ st.caption(
 )
 
 # ---- ④ 환산표
-st.subheader("④ GPA ↔ 100점 만점 환산 (참고용)")
-st.write("GPA(4.0 만점)에 **25를 곱해서** 100점 만점으로 바꿨어요. 그래서 GPA 변화 **+0.1 = +2.5점**이에요.")
-conv = pd.DataFrame({"GPA (4.0 만점)": [4.0, 3.5, 3.0, 2.5, 2.0, 1.5]})
-conv["100점 만점 환산"] = (conv["GPA (4.0 만점)"] * PT).round(1)
+st.subheader("④ 4.0 학점 ↔ 4.5 학점 ↔ 100점 환산 (참고용)")
+st.write("데이터의 GPA(4.0 만점)에 **비례**해서 바꿨어요. 4.5 만점은 ×1.125, 100점 만점은 ×25예요.")
+conv = pd.DataFrame({"학점 (4.0 만점)": [4.0, 3.5, 3.0, 2.5, 2.0, 1.5]})
+conv["학점 (4.5 만점)"] = (conv["학점 (4.0 만점)"] * 4.5 / 4.0).round(2)
+conv["100점 만점"] = (conv["학점 (4.0 만점)"] * 25).round(1)
 st.dataframe(conv, hide_index=True, use_container_width=True)
-st.caption("실제 학교는 과목·학년·평가 방식(상대/절대평가)에 따라 점수 체계가 달라서, '대략 이 정도 크기'를 느끼는 참고용이에요.")
+st.caption("실제 학교는 학교·과목·평가 방식(상대/절대평가)에 따라 점수 체계가 달라서, '대략 이 정도 크기'를 느끼는 참고용이에요.")
 
 with st.expander("🔍 이 결과를 믿기 전에 꼭 확인할 것들"):
     st.markdown(
