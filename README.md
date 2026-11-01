@@ -20,9 +20,6 @@
 
 ## 4) 제외 할 데이터
 - Major_Category: 전공 계열
-- Year_of_Study: 학년
-- Primary_Use_Case: AI 주 사용 목적
-- Prompt_Engineering_Skill: 프롬프트 작성 숙련도
 - Tool_Diversity: AI 도구 다양성 (사용하는 도구 종류 수)
 - Paid_Subscription: 유료 구독 여부
 - Perceived_AI_Dependency: 체감 AI 의존도
