@@ -6,10 +6,12 @@ import streamlit as st
 alt.data_transformers.disable_max_rows()
 st.set_page_config(page_title="AI를 쓰면 성적이 오를까?", page_icon="🎓", layout="wide")
 
+# 데이터 파일: 학점.csv (7개 열)
 DATA_URL = (
-    "https://raw.githubusercontent.com/dg2025429-dot/AI/refs/heads/main/"
-    "ai_student_impact_dataset%20(1).csv"
+    "https://raw.githubusercontent.com/dg2025429-dot/AI/"
+    "102027983bf9103b236f53776cd6e2dfa34b73f7/%ED%95%99%EC%A0%90.csv"
 )
+LOCAL_PATH = "data/학점.csv"  # 인터넷이 안 될 때 쓸 예비 경로
 
 # 꼭 있어야 하는 핵심 열 (이 4개만 있어도 앱이 동작합니다)
 CORE = ["Pre_Semester_GPA", "Weekly_GenAI_Hours", "Traditional_Study_Hours", "Post_Semester_GPA"]
@@ -21,7 +23,7 @@ STUDY_LABELS = ["5h 이하", "5~10h", "10~15h", "15h 이상"]
 GPA_BINS = [0, 2.5, 3.0, 3.5, 4.01]
 GPA_LABELS = ["2.5 미만", "2.5~3.0", "3.0~3.5", "3.5 이상"]
 
-# 있을 때만 쓰는 선택 열 (16개 열 버전 데이터용)
+# 있을 때만 쓰는 선택 열 (학점.csv에는 학년·AI 주 사용 목적·프롬프트 숙련도가 있습니다)
 CAT_KR = {
     "Major_Category": "전공 계열",
     "Year_of_Study": "학년",
@@ -51,7 +53,10 @@ NUM_KR = {
 
 @st.cache_data(show_spinner="데이터를 불러오는 중...")
 def load_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+    try:
+        df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+    except Exception:
+        df = pd.read_csv(LOCAL_PATH, encoding="utf-8-sig")
     df.columns = df.columns.str.replace("\ufeff", "", regex=False).str.strip()
     return df
 
@@ -100,6 +105,11 @@ f = df[mask]
 
 st.title("🎓 AI를 쓰면 성적이 오를까?")
 st.caption(f"AI 도구 사용이 학생에게 미친 영향 · 전체 {len(df):,}명 중 {len(f):,}명 선택")
+st.warning(
+    "⚠️ **이 사이트의 결과를 너무 믿지 마세요.** 연습·참고용이고, 데이터는 대학생 GPA(4.0 만점)라서 초·중·고에 "
+    "그대로 맞는지 확인되지 않았어요. 보이는 것은 '같이 움직인다'는 관계일 뿐 AI가 성적을 바꿨다는 증거가 아니고, "
+    "데이터의 출처도 검증하지 못했어요. 내 조건으로 예측해 보려면 왼쪽 메뉴의 **순공시간별 AI 사용 예측** 페이지를 보세요."
+)
 
 if f.empty:
     st.warning("선택한 조건에 맞는 학생이 없습니다. 필터를 조정해 주세요.")
