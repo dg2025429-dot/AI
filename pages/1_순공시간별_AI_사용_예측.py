@@ -93,13 +93,29 @@ def train(d: pd.DataFrame):
     beta = np.linalg.solve(A.T @ A + P, A.T @ y[tr])
     pred = design(X[te], D[te], mu, sd) @ beta
     resid = y[te] - pred
-    ss_res, ss_tot = (resid**2).sum(), ((y[te] - y[te].mean()) ** 2).sum()
+    y_tr, y_te = y[tr], y[te]
+    ss_tot = ((y_te - y_te.mean()) ** 2).sum()
+
+    def score(p):
+        e = y_te - p
+        return {"mae": float(np.abs(e).mean()), "r2": float(1 - (e**2).sum() / ss_tot)}
+
+    # ---- 베이스라인: 같은 학습/테스트 분할에서 '쉬운 방법'의 점수를 재 둡니다.
+    sg = pd.cut(d["study"], STUDY_BINS, labels=False).to_numpy()
+    gmean = {g: float(y_tr[sg[tr] == g].mean()) for g in range(4) if (sg[tr] == g).any()}
+    lin_A = np.column_stack([np.ones(len(X)), X])
+    lin_b = np.linalg.lstsq(lin_A[tr], y_tr, rcond=None)[0]
+    baselines = [
+        ("전체 평균으로 찍기", score(np.full(len(te), y_tr.mean()))),
+        ("전통 학습시간 4집단 평균", score(np.array([gmean.get(g, y_tr.mean()) for g in sg[te]]))),
+        ("선형 회귀 (숫자 3개)", score(lin_A[te] @ lin_b)),
+    ]
     share = lambda col, cats: [float((d[col] == c).mean()) for c in cats]  # noqa: E731
     return {
         "beta": beta, "mu": mu, "sd": sd,
-        "r2": float(1 - ss_res / ss_tot),
+        "r2": float(1 - (resid**2).sum() / ss_tot),
         "mae": float(np.abs(resid).mean()),
-        "base_mae": float(np.abs(y[te] - y[tr].mean()).mean()),
+        "baselines": baselines,
         "resid_sd": float(resid.std()),
         "n_tr": len(tr), "n_te": len(te),
         "w_year": share("year", YEAR), "w_use": share("use", USE), "w_skill": share("skill", SKILL),
@@ -315,18 +331,66 @@ st.caption(f"학습시간 {study_h:g}h, 현재 {fmt_val(now)} 기준이에요. �
 compare([(USE_KR[u], u) for u in USE],
         lambda u: predict(info, grid, study_h, pre_gpa, year_sel, u, skill_sel), "AI 사용 목적")
 
-# ---- ④ 모델 신뢰도
-st.subheader("④ 이 모델은 얼마나 믿을 만할까?")
-k1, k2, k3 = st.columns(3)
-k1.metric("결정계수 R² (테스트)", f"{info['r2']:.3f}",
-          help="1에 가까울수록 잘 맞고, 0에 가까우면 거의 못 맞힌다는 뜻이에요.")
-k2.metric("평균 오차 MAE (GPA 4.0 기준)", f"{info['mae']:.3f}")
-k3.metric("그냥 평균으로 찍었을 때 MAE", f"{info['base_mae']:.3f}",
-          help="모델 오차가 이 값보다 확실히 작아야 쓸모가 있어요.")
+# ---- ④ 모델 신뢰도 (베이스라인과 비교)
+st.subheader("④ 이 모델은 얼마나 믿을 만할까? (베이스라인과 비교)")
+st.write(
+    "**베이스라인**은 '복잡한 모델 없이 쉬운 방법만 써도 이만큼은 나온다'는 기준 점수예요. "
+    "우리 모델이 이 기준보다 확실히 좋아야 모델을 만든 보람이 있어요. 모두 같은 학습/테스트 학생으로 쟀어요."
+)
+model_row = ("우리 모델: 다항+릿지 (학년·목적·숙련도 포함)", {"mae": info["mae"], "r2": info["r2"]})
+rows_cmp = [(f"베이스라인 {i + 1}: {n}", sc) for i, (n, sc) in enumerate(info["baselines"])] + [model_row]
+mean_mae = info["baselines"][0][1]["mae"]
+best_base = min(info["baselines"], key=lambda t: t[1]["mae"])
+cmp_df = pd.DataFrame({
+    "방법": [n for n, _ in rows_cmp],
+    f"평균 오차 MAE ({UNIT_NAME})": [round(sc["mae"] * UNIT, 3) for _, sc in rows_cmp],
+    "R² (설명력)": [round(sc["r2"], 3) for _, sc in rows_cmp],
+    "'전체 평균 찍기' 대비 오차 감소": [f"{(mean_mae - sc['mae']) / mean_mae:.1%}" for _, sc in rows_cmp],
+})
+st.dataframe(cmp_df, hide_index=True, use_container_width=True)
+
+bar = alt.Chart(cmp_df.assign(우리모델=[n.startswith("우리") for n in cmp_df["방법"]])).mark_bar().encode(
+    y=alt.Y("방법:N", sort=None, title=None, axis=alt.Axis(labelLimit=380)),
+    x=alt.X(f"평균 오차 MAE ({UNIT_NAME}):Q", title=f"평균 오차 (작을수록 좋아요, {UNIT_NAME})"),
+    color=alt.Color("우리모델:N", legend=None, scale=alt.Scale(domain=[False, True], range=["#b0b7c3", "#1f77b4"])),
+    tooltip=["방법", f"평균 오차 MAE ({UNIT_NAME}):Q", "R² (설명력):Q"],
+)
+st.altair_chart(bar.properties(height=200), use_container_width=True)
+
+gain_vs_mean = (mean_mae - info["mae"]) / mean_mae
+gain_vs_best = (best_base[1]["mae"] - info["mae"]) / best_base[1]["mae"]
+b1, b2, b3 = st.columns(3)
+b1.metric("우리 모델 R² (테스트)", f"{info['r2']:.3f}",
+          help="성적 변화의 흩어짐 중 몇 %를 설명했는지예요. 1에 가까울수록 좋아요.")
+b2.metric("'전체 평균 찍기'보다 오차 감소", f"{gain_vs_mean:.1%}")
+b3.metric(f"가장 좋은 베이스라인({best_base[0]})보다 오차 감소", f"{gain_vs_best:.1%}")
+if gain_vs_best < 0.05:
+    st.error("우리 모델이 가장 좋은 베이스라인과 거의 차이가 없어요. 복잡한 모델을 쓸 이유가 약하다는 뜻이에요.")
+elif info["r2"] < 0.5:
+    st.warning(
+        f"베이스라인보다는 확실히 좋아졌지만(오차 {gain_vs_best:.0%} 감소), R²가 {info['r2']:.2f}라서 "
+        "아직 개인의 성적을 정확히 맞히는 수준은 아니에요. 평균적인 경향을 보는 용도로만 쓰세요."
+    )
+else:
+    st.success("베이스라인보다 확실히 좋아졌어요.")
+
+share_up = float((df["delta"] > 0).mean())
+with st.expander("🧭 베이스라인이 왜 필요할까요?"):
+    st.markdown(
+        f"""
+1. **점수 하나만으로는 좋은지 나쁜지 알 수 없어요.** R²가 0.35라고 해도 기준이 없으면 높은 건지 낮은 건지 몰라요. 쉬운 방법의 점수를 같이 놓으면 비로소 의미가 생겨요.
+2. **'아무것도 안 한 것'보다 나아졌는지 확인해요.** 가장 단순한 베이스라인인 '전체 평균으로 찍기'는 R²가 0이에요. 모델이 여기서 얼마나 멀어졌는지가 곧 모델이 배운 양이에요.
+3. **복잡한 모델이 정말 필요한지 알려줘요.** 학습시간 집단 평균이나 직선 같은 단순한 방법과 거의 비슷하다면, 복잡한 모델은 설명만 어려워지고 이득이 없어요.
+4. **이 데이터는 한쪽으로 치우쳐 있어서 더 중요해요.** 학생의 **{share_up:.1%}** 가 성적이 올랐어요. 그래서 '오른다'고만 찍어도 꽤 맞아 보여요. 기준선이 없으면 모델이 대단해 보이는 착각을 하기 쉬워요.
+5. **단계를 밟아 올라가는 모습이 보여요.** 평균 찍기 → 학습시간별 평균 → 직선 → 곡선 모델 순서로 오차가 줄어드는 걸 보여주면, 어디서 얼마나 좋아졌는지 설명할 수 있어요.
+
+**주의:** 베이스라인과 비교해도 '이 점수가 실제 학생에게도 나온다'는 보장은 없어요. 이 데이터 안에서의 비교일 뿐이에요.
+        """
+    )
 st.caption(
     f"학습 {info['n_tr']:,}명 / 테스트 {info['n_te']:,}명 (무작위 8:2). 모델은 학기 전 GPA·전통 학습시간·AI 사용시간·학년·목적·숙련도로 "
-    "GPA 변화를 예측하는 2차 다항 회귀(릿지)예요. R²가 낮거나 오차가 '평균으로 찍기'와 비슷하면, "
-    "개인의 성적은 거의 예측하지 못한다는 뜻이에요."
+    "GPA 변화를 예측하는 2차 다항 회귀(릿지)예요. 베이스라인 ②는 전통 학습시간을 5·10·15시간 기준 4집단으로 나눠 집단 평균을 쓰는 방법, "
+    "③은 숫자 3개(학기 전 GPA·학습시간·AI 시간)만 쓰는 직선식이에요."
 )
 
 # ---- ⑤ 환산표
