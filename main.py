@@ -103,7 +103,7 @@ for col in CAT_COLS:  # 선택 열이 있으면 필터도 추가
     mask &= df[col].isin(chosen)
 f = df[mask]
 
-st.title("🎓 AI를 쓰면 성적이 오를까?")
+st.title("🎓 AI를 쓰면 성적이 얼마나 오를까?")
 st.caption(f"AI 도구 사용이 학생에게 미친 영향 · 전체 {len(df):,}명 중 {len(f):,}명 선택")
 st.warning(
     "⚠️ **이 사이트의 결과를 너무 믿지 마세요.** 연습·참고용이고, 데이터는 대학생 GPA(4.0 만점)라서 초·중·고에 "
